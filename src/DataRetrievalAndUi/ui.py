@@ -19,6 +19,9 @@ HOST = '127.0.0.1'  # localhost
 PORT = 12346
 firstcall = True
 
+# Store the latest sensor values globally
+last_sensor_values = []
+
 def server_thread():
     """
     @brief Server thread function to handle incoming connections and data.
@@ -62,10 +65,10 @@ def update_display(msg):
     @param msg The received message in JSON format.
     @param firstcall A flag indicating if it's the first call to this function.
     """
+    global last_sensor_values
     try:
         # Parse the JSON message
         data = json.loads(msg)
-
 
         # Extract xpos and ypos from the 'point' dictionary
         xpos, ypos = data.get('point', {}).get('position', [None, None])
@@ -74,14 +77,13 @@ def update_display(msg):
         if xpos is not None and ypos is not None:
             # Update the GUI with the received coordinates
             label.config(text=f"Xpos: {xpos}    Ypos: {ypos}    Uncertainty: {data.get('point', {}).get('Uncertainty', 'N/A')}")
-            update_point_on_canvas(xpos, ypos)
-
-            # Extract sensor values
+            # Store sensor values for dot color/size calculation
             sensor_values = data.get('sensor_values', [])
+            last_sensor_values = sensor_values
+            update_point_on_canvas(xpos, ypos)
 
             # Visualize sensors
             visualize_sensors(sensor_values)
-#            print(f"Received data: {data}")
         else:
             print("Invalid message format:", msg)
 
@@ -90,20 +92,88 @@ def update_display(msg):
 
 def update_point_on_canvas(xpos, ypos):
     """
-    @brief Update the point on the canvas based on received coordinates.
-    @param xpos X-coordinate of the point.
-    @param ypos Y-coordinate of the point.
+    Draw a stickman at the given coordinates, with color and flashing logic.
     """
-    # Clear existing points
     canvas.delete("point")
 
-    # Calculate canvas coordinates
+    # Get sensor positions (receivers)
+    sensor_positions = [sensor.get('pos', [0, 0]) for sensor in last_sensor_values]
+
+    # Calculate distance to each receiver
+    min_distance = float('inf')
+    for sx, sy in sensor_positions:
+        dist = math.hypot(xpos - sx, ypos - sy)
+        if dist < min_distance:
+            min_distance = dist
+
+    # Stickman size mapping
+    min_size = 20
+    max_size = 60
+    max_dist = 10  # adjust as needed
+
+    if sensor_positions:
+        size = max_size - (max_size - min_size) * min(min_distance, max_dist) / max_dist
+        size = max(min_size, min(size, max_size))
+    else:
+        size = 30
+
+    # Color: red (close), yellow (medium), green (far)
+    if min_distance < 2:
+        color = "#ff3333"  # red
+    elif min_distance < 5:
+        color = "#ffcc00"  # yellow
+    else:
+        color = "#00cc44"  # green
+
     canvas_x = (xpos - X_MIN) * (canvas.winfo_width() / (X_MAX - X_MIN))
     canvas_y = canvas.winfo_height() - (ypos - Y_MIN) * (canvas.winfo_height() / (Y_MAX - Y_MIN))
-    sys.stdout.flush()
 
-    # Draw new point
-    canvas.create_oval(canvas_x - POINT_SIZE, canvas_y - POINT_SIZE, canvas_x + POINT_SIZE, canvas_y + POINT_SIZE, fill="red", tags="point")
+    # Flashing logic: if very close, toggle visibility
+    if min_distance < 1:
+        if int(time.time() * 2) % 2 == 0:
+            return  # Don't draw the stickman (invisible this frame)
+
+    # Draw stickman (head, body, arms, legs)
+    head_radius = size * 0.2
+    body_length = size * 0.5
+    arm_length = size * 0.35
+    leg_length = size * 0.4
+
+    # Head
+    canvas.create_oval(
+        canvas_x - head_radius, canvas_y - body_length - head_radius,
+        canvas_x + head_radius, canvas_y - body_length + head_radius,
+        fill=color, outline=color, tags="point"
+    )
+    # Body
+    canvas.create_line(
+        canvas_x, canvas_y - body_length + head_radius,
+        canvas_x, canvas_y + body_length * 0.5,
+        fill=color, width=2, tags="point"
+    )
+    # Arms
+    canvas.create_line(
+        canvas_x, canvas_y - body_length * 0.5,
+        canvas_x - arm_length, canvas_y,
+        fill=color, width=2, tags="point"
+    )
+    canvas.create_line(
+        canvas_x, canvas_y - body_length * 0.5,
+        canvas_x + arm_length, canvas_y,
+        fill=color, width=2, tags="point"
+    )
+    # Left leg
+    canvas.create_line(
+        canvas_x, canvas_y + body_length * 0.5,
+        canvas_x - leg_length * 0.5, canvas_y + body_length * 0.5 + leg_length,
+        fill=color, width=2, tags="point"
+    )
+    # Right leg
+    canvas.create_line(
+        canvas_x, canvas_y + body_length * 0.5,
+        canvas_x + leg_length * 0.5, canvas_y + body_length * 0.5 + leg_length,
+        fill=color, width=2, tags="point"
+    )
 
 def visualize_sensors(sensor_values):
     """
@@ -128,19 +198,15 @@ def visualize_sensors(sensor_values):
         canvas_x = (xpos - X_MIN) * (canvas_width / (X_MAX - X_MIN))
         canvas_y = canvas_height - (ypos - Y_MIN) * (canvas_height / (Y_MAX - Y_MIN))
         aspect_ratio = canvas_width / canvas_height
-        
-
 
         # Calculate endpoint of the line based on angle and length
         line_length = 5000  # Adjust as needed
-        end_x = canvas_x + line_length * math.cos(resAngle) * aspect_ratio #* aspect_ratio
-        end_y = canvas_y - line_length * math.sin(resAngle) * (graph_width/graph_height)#* 0.29#wtf, this should be 1
-
+        end_x = canvas_x + line_length * math.cos(resAngle) * aspect_ratio
+        end_y = canvas_y - line_length * math.sin(resAngle) * (graph_width/graph_height)
 
         # Draw line originating from the box
         canvas.create_line(canvas_x, canvas_y, end_x, end_y, fill="black", tags="sensordata")
 
-        
         if firstcall:
             # Draw green box
             canvas.create_rectangle(canvas_x - 5, canvas_y - 5, canvas_x + 5, canvas_y + 5, fill="green", tags="sensor")
@@ -160,9 +226,6 @@ def visualize_sensors(sensor_values):
                 canvas.create_text(label_x, label_y, text=angle_label, fill="black", tags="sensor")
     
     firstcall=False
-        
-
-    
 
 def draw_axes():
     """
@@ -252,14 +315,14 @@ if __name__ == "__main__":
     root.bind("<Configure>", resize_updates)
 
     # Start the server thread
-    server_thread = threading.Thread(target=server_thread)
-    server_thread.daemon = True
-    server_thread.start()
+    server_thread_obj = threading.Thread(target=server_thread)
+    server_thread_obj.daemon = True
+    server_thread_obj.start()
 
     # Start the main thread for printing dots
-    main_thread = threading.Thread(target=main_thread)
-    main_thread.daemon = True
-    main_thread.start()
+    main_thread_obj = threading.Thread(target=main_thread)
+    main_thread_obj.daemon = True
+    main_thread_obj.start()
 
     # Start the Tkinter event loop in a separate thread
     asyncio.run(main_async())
