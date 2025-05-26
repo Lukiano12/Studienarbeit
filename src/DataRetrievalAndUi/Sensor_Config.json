@@ -4,13 +4,13 @@
         "theta": 90,
         "pos": [3,0],
         "id": "6C1DEBA0982F",
-        "serial_port": "COM11"
+        "serial_port": "COM6"
     },
     {
         "index": 1,
         "theta": 90,
         "pos": [0,0],
         "id": "6C1DEBA79E2D",
-        "serial_port": "COM12"
+        "serial_port": "COM5"
     }
 ]

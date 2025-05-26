@@ -1,4 +1,3 @@
-
 import json
 import math
 import os
@@ -6,86 +5,56 @@ import signal
 import sys
 import serial
 import re
-import socket
 import time
 import threading
-import asyncio
-import websockets
+import socket
+from datetime import datetime
 
+def log_data(message, logfile):
+    timestamp = time.time()
+    with open(logfile, "a") as f:
+        f.write(json.dumps({"timestamp": timestamp, "data": json.loads(message)}) + "\n")
 
 # Set the server address and port
-port= 12345
+port= 12346
 clients = set()
 sensors=None
 
-
-
-
 def init_serials():
-    """
-    @brief Initialize the serial connections for anchor nodes.
-    @details Sets up serial connections for two anchor nodes with specific configurations.
-    """
-    # baudrate = 115200, ready to send/ clear to send = 1, If a timeout is set it may return less characters as requested.
-    # With no timeout it will block until the requested number of bytes is read.
     global sensors
     for i in range(len(sensors)):
-        print(f"Open Sensor {i}:{sensors[i]["serial_port"]} ")
+        print(f"Open Sensor {i}:{sensors[i]['serial_port']} ")
         sensors[i]['serial']= serial.Serial(sensors[i]["serial_port"], 115200, timeout=0.05, rtscts=1)
         try:
             sensors[i]['serial'].isOpen()
             print(f"anchor{i} (first anchor) is opened!")
-
         except IOError:
             sensors[i]['serial'].close()
             sensors[i]['serial'].open()
             print("port was already open, was closed and opened again!")
-    
 
 risk_speed = None
 
 def calculate_speed_along_line(current_angles, previous_angles, distance_between_antennas, last_time):
-    """
-    Berechnet die Geschwindigkeit des Senders entlang der Linie zwischen den beiden Antennen.
-    @param current_angles Aktuelle Winkel des Senders zu den beiden Antennen.
-    @param previous_angles Vorherige Winkel des Senders zu den beiden Antennen.
-    @param distance_between_antennas Abstand zwischen den beiden Antennen.
-    @param last_time Zeitstempel der vorherigen Messung.
-    @return Geschwindigkeit des Senders entlang der Linie und aktualisierte Winkel und Zeit.
-    """
-    # Prüfen, ob vorherige Daten vorhanden sind
     if previous_angles is None:
         return 0, current_angles, time.time()
-
-    # Zeitunterschied berechnen
     current_time = time.time()
     time_difference = current_time - last_time
-    
-    # Winkeländerungen zu den beiden Antennen berechnen
     delta_angle_1 = math.radians(current_angles[0]['val'] - previous_angles[0]['val'])
     delta_angle_2 = math.radians(current_angles[1]['val'] - previous_angles[1]['val'])
-    
-    # Parallelbewegung berechnen
     parallel_distance_change = abs(distance_between_antennas * (delta_angle_1 - delta_angle_2) / 2)
-    
-    # Geschwindigkeit entlang der Linie berechnen
     speed_along_line = parallel_distance_change / time_difference if time_difference > 0 else 0
-    
     return speed_along_line, current_angles, current_time
 
-
 def calculate_risk_level(speed_along_line, angle_antenna_1, angle_antenna_2):
-    """
-    @brief Calculate risk level depending on distance and speed 
-    """
-
     if ((angle_antenna_1 < 67 and angle_antenna_1 > 45) and (angle_antenna_2 < 22 and angle_antenna_2 >=0)) or ((angle_antenna_1 < 45 and angle_antenna_1 > 22) and angle_antenna_2 < 45) or (angle_antenna_1 < 22 and angle_antenna_2 < 45):
         risk_position = 1
     elif angle_antenna_1 > 67 or ((angle_antenna_1 < 67 and angle_antenna_1 > 45) and (angle_antenna_2 < 67 and angle_antenna_2 > 22)):
         risk_position = 2
     elif ((angle_antenna_1 < 67 and angle_antenna_1 > 45) and (angle_antenna_2 > 67)) or ((angle_antenna_1 < 45 and angle_antenna_1 > 22) and (angle_antenna_2 > 45)) or (angle_antenna_1 < 22 and angle_antenna_2 > 45):
         risk_position = 3
-    else: 0
+    else:
+        risk_position = 1
 
     if speed_along_line > 0 and speed_along_line < 1:
         risk_speed = 2
@@ -102,19 +71,10 @@ def calculate_risk_level(speed_along_line, angle_antenna_1, angle_antenna_2):
         risk = 1
 
     return risk
-    
-
 
 def getanchor(sensor):
-    """
-    @brief Retrieve data from the second anchor node.
-    @param val2_list List to store the azimuth data from the second anchor node.
-    """
-    
     if sensor['serial'].in_waiting > 0:
         dataStream_anchor = str(sensor['serial'].read(80))
-        #print(sensor["serial_port"],dataStream_anchor)
-        #print(dataStream_anchor2)
         regex_anchor = re.split("UUDF:", dataStream_anchor)
         for listing in regex_anchor:
             if sensor['id'] in listing:
@@ -125,20 +85,11 @@ def getanchor(sensor):
         sensor['serial'].reset_input_buffer()
 
 def on_close():
-    """
-    @brief Close the serial connections and exit the program.
-    """
     for s in sensors:
         s['serial'].close()
     exit()
 
 def getValues(results):
-    """
-    @brief Retrieve and process values from the anchor nodes.
-    @param theta2_offset Azimuth offset for the first anchor node.
-    @param theta3_offset Azimuth offset for the second anchor node.
-    @return A list of dictionaries with processed values or 0 if no change.
-    """
     global sensors
     numSensors=len(sensors)
     changed=False
@@ -148,30 +99,20 @@ def getValues(results):
         sensors[i]['val']=[]
         sensors[i]['thread'] = threading.Thread(target=getanchor, args=(sensors[i],))
         sensors[i]['thread'].start()
-    
-
     for i in range(numSensors):
-       sensors[i]['thread'].join()
-        
+        sensors[i]['thread'].join()
     for i in range(numSensors):
         try:
-        # Retrieve the result from the list
             sensors[i]['result'] = sensors[i]['val'][0]
             changed=True
         except IndexError:
-            # Keep old Value if the index is out of range (No Value read)
             None
-    
-    
-    
     if changed:
         for i in range(numSensors):
             results[i]={"theta":sensors[i]['theta'],"val":sensors[i]['result'],"pos":sensors[i]['pos']}
-        #print(results)
         return results
     else: 
         return 0
-
 
 server_running = True
 server_socket = None
@@ -179,11 +120,6 @@ client_sockets = []
 num_pack=0
 
 def handle_client(client_socket, client_address):
-    """
-    @brief Handle incoming client connections.
-    @param client_socket The socket object for the connected client.
-    @param client_address The address of the connected client.
-    """
     print(f"Connection from {client_address}")
     while server_running:
         try:
@@ -194,23 +130,23 @@ def handle_client(client_socket, client_address):
         except Exception as e:
             print(f"Error receiving data from {client_address}: {e}")
             break
-
     print(f"Client {client_address} disconnected")
     client_sockets.remove(client_socket)
     client_socket.close()
 
 def send_data_to_all_clients(data):
-    """
-    @brief Send data to all connected clients.
-    @param data The data to be sent to all clients.
-    """
     global num_pack
     num_pack=num_pack+1
     spinner_chars = ['/', '|', '\\', '-']
-    datastruct=json.loads(data) 
-    
-    print(f"\rSending to {len(client_sockets)} clients[{num_pack}]{spinner_chars[num_pack % len(spinner_chars)]} val0:{datastruct[0]["val"]} val1:{datastruct[1]["val"]}", end='')
-
+    # For logging, print the sensor values
+    try:
+        datastruct=json.loads(data)
+        if isinstance(datastruct, dict) and "sensor_values" in datastruct:
+            print(f"\rSending to {len(client_sockets)} clients[{num_pack}]{spinner_chars[num_pack % len(spinner_chars)]} val0:{datastruct['sensor_values'][0]['val']} val1:{datastruct['sensor_values'][1]['val']}", end='')
+        elif isinstance(datastruct, list):
+            print(f"\rSending to {len(client_sockets)} clients[{num_pack}]{spinner_chars[num_pack % len(spinner_chars)]} val0:{datastruct[0]['val']} val1:{datastruct[1]['val']}", end='')
+    except Exception:
+        print(f"\rSending to {len(client_sockets)} clients[{num_pack}]{spinner_chars[num_pack % len(spinner_chars)]}", end='')
     for client_socket in client_sockets:
         try:
             client_socket.sendall(data.encode('utf-8'))
@@ -218,52 +154,71 @@ def send_data_to_all_clients(data):
             print(f"Error sending data to client: {e}")
 
 def signal_handler(sig, frame):
-    """
-    @brief Signal handler for keyboard interrupt.
-    @param sig The signal number.
-    @param frame The current stack frame.
-    """
     global server_running, server_socket
     print("Stopping server...")
     server_running = False
-    # Close server socket
     if server_socket:
         server_socket.close()
-    # Close client sockets
     for client_socket in client_sockets:
         client_socket.close()
     sys.exit()
 
-
 def accept_connections():
-    """
-    @brief Accept incoming connections in a separate thread.
-    """
     global server_socket
     try:
         while server_running:
-            # Accept incoming connection
             client_socket, client_address = server_socket.accept()
             client_sockets.append(client_socket)
-
-            # Start a new thread to handle the client
             client_thread = threading.Thread(target=handle_client, args=(client_socket, client_address))
             client_thread.start()
     except Exception as e:
         print(f"Error accepting connection: {e}")
 
+def triangulate_position(anchor1, anchor2, angle1_deg, angle2_deg):
+    """
+    Calculate the (x, y) position of the tag using two anchors and their measured angles.
+    anchor1, anchor2: [x, y] positions of the anchors
+    angle1_deg, angle2_deg: measured angles (in degrees) from each anchor to the tag
+    Returns: [x, y] list
+    """
+    angle1 = math.radians(angle1_deg)
+    angle2 = math.radians(angle2_deg)
+    x1, y1 = anchor1
+    x2, y2 = anchor2
+
+    dx1 = math.cos(angle1)
+    dy1 = math.sin(angle1)
+    dx2 = math.cos(angle2)
+    dy2 = math.sin(angle2)
+
+    denominator = dx1 * dy2 - dy1 * dx2
+    if abs(denominator) < 1e-6:
+        return [(x1 + x2) / 2, (y1 + y2) / 2]
+    t1 = ((x2 - x1) * dy2 - (y2 - y1) * dx2) / denominator
+    x = x1 + t1 * dx1
+    y = y1 + t1 * dy1
+    return [x, y]
+
+# --- Added: Connect to UI as a client ---
+UI_HOST = "127.0.0.1"
+UI_PORT = 12346
+
+def connect_to_ui():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    for _ in range(10):
+        try:
+            sock.connect((UI_HOST, UI_PORT))
+            print("Connected to UI for real-time data.")
+            return sock
+        except ConnectionRefusedError:
+            print("UI not ready, retrying...")
+            time.sleep(1)
+    raise Exception("Could not connect to UI after retries.")
 
 def main():
-    """
-    @brief Main function to start the server and manage Bluetooth read.
-    """
-    # Register signal handler for keyboard interrupt
     signal.signal(signal.SIGINT, signal_handler)
-
-    # Create a socket object
     global server_socket 
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
     server_socket.bind(('127.0.0.1', 12345))
     server_socket.listen(5)
     print("Server listening on port 12345")
@@ -278,15 +233,18 @@ def main():
     json_file_path = os.path.join(script_dir, 'Sensor_Config.json')
     with open(json_file_path, 'r') as file:
         sensors = json.load(file)
-    #print(sensors)
 
-    # Your Bluetooth read logic goes here
     init_serials()
     temp=[None]
-
     last_angles = None
     last_time = time.time()
     distance_between_antennas = 0.5 
+
+    # Generate a unique log file name for each run
+    log_filename = f"tag_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+
+    # --- Connect to UI for real-time data ---
+    ui_sock = connect_to_ui()
 
     while True:
         try:
@@ -304,10 +262,26 @@ def main():
                 for i in range(len(temp)):
                     temp[i]['speed_along_line'] = speed_along_line
                     temp[i]['risk_level'] = risk
-                
-                message_final = json.dumps(temp)
+
+                # --- Calculate tag position using triangulation ---
+                anchor1_pos = temp[0]['pos']
+                anchor2_pos = temp[1]['pos']
+                tag_position = triangulate_position(anchor1_pos, anchor2_pos, angle_antenna_1, angle_antenna_2)
+
+                # Compose the message as expected by the UI and logger
+                message_final = json.dumps({
+                    "point": {"position": tag_position, "Uncertainty": 0},
+                    "sensor_values": temp
+                })
                 print(message_final)
-                send_data_to_all_clients(message_final)
+                # --- Send to UI in real time ---
+                try:
+                    ui_sock.sendall(message_final.encode("utf-8"))
+                except Exception as e:
+                    print(f"Error sending to UI: {e}")
+                # Only send to other clients, not the UI
+                # send_data_to_all_clients(message_final)
+                log_data(message_final, log_filename)
         except Exception as e:
             None
 

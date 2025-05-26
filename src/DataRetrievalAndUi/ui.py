@@ -8,13 +8,12 @@
 import json
 import math
 import socket
-import sys
 import threading
 import time
 import tkinter as tk
-import asyncio
+import subprocess
 
-displaydebuginfo=0
+displaydebuginfo = 0
 HOST = '127.0.0.1'  # localhost
 PORT = 12346
 firstcall = True
@@ -22,50 +21,55 @@ firstcall = True
 # Store the latest sensor values globally
 last_sensor_values = []
 
+# Smoothing for tag position
+position_history = []
+SMOOTHING_WINDOW = 5  # Increase for more smoothing, decrease for less lag
+
+def handle_client(conn, addr):
+    print('Connected by', addr)
+    try:
+        while True:
+            data = conn.recv(1024)
+            if not data:
+                break
+            msg = data.decode()
+            last_occurance = msg.rfind('{"point":')
+            if last_occurance != -1:
+                last_msg = msg[last_occurance:]
+                if displaydebuginfo:
+                    print("Received:", last_msg)
+                print(f"{last_msg}\n", end='')
+                update_display(last_msg)
+            else:
+                continue
+    except Exception as e:
+        print(f"Exception in client thread {addr}: {e}")
+    finally:
+        print(f"Connection closed: {addr}")
+        conn.close()
+
 def server_thread():
     """
     @brief Server thread function to handle incoming connections and data.
     """
-    while True:
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind((HOST, PORT))
-                s.listen()
-                print(f"Server listening on port {PORT}...")
-
-                while True:
-                    conn, addr = s.accept()
-                    with conn:
-                        print('Connected by', addr)
-                        while True:
-                            
-                            data = conn.recv(1024)
-                            if not data:
-                                break
-                            start_time = time.time()  # Record the start time
-
-                            msg = data.decode()
-                            last_occurance=msg.rfind('{"point":')
-                            if(last_occurance!=-1):
-                                last_msg=msg[last_occurance:]
-                            if displaydebuginfo:
-                                print("Received:", last_msg)
-                            print(f"{last_msg}\n", end='')
-    
-                            update_display(last_msg) 
-                            elapsed=time.time()-start_time
-                            print(f"Time taken for this round: {elapsed:.4f} seconds")
-
-        except Exception as e:
-            print(f"Exception occurred: {e}. Restarting server...")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind((HOST, PORT))
+        s.listen()
+        print(f"Server listening on port {PORT}...")
+        while True:
+            try:
+                conn, addr = s.accept()
+                client_thread = threading.Thread(target=handle_client, args=(conn, addr), daemon=True)
+                client_thread.start()
+            except Exception as e:
+                print(f"Exception occurred: {e}. Continuing...")
 
 def update_display(msg):
     """
     @brief Update the display with the received message.
-    @param msg The received message in JSON format.
-    @param firstcall A flag indicating if it's the first call to this function.
     """
-    global last_sensor_values
+    global last_sensor_values, position_history
     try:
         # Parse the JSON message
         data = json.loads(msg)
@@ -80,9 +84,11 @@ def update_display(msg):
             # Store sensor values for dot color/size calculation
             sensor_values = data.get('sensor_values', [])
             last_sensor_values = sensor_values
-            update_point_on_canvas(xpos, ypos)
-
-            # Visualize sensors
+            # Update smoothing buffer with the latest position (from any client)
+            position_history.append((xpos, ypos))
+            if len(position_history) > SMOOTHING_WINDOW:
+                position_history.pop(0)
+            update_point_on_canvas()
             visualize_sensors(sensor_values)
         else:
             print("Invalid message format:", msg)
@@ -90,11 +96,16 @@ def update_display(msg):
     except json.JSONDecodeError:
         print("Invalid JSON format:", msg)
 
-def update_point_on_canvas(xpos, ypos):
+def update_point_on_canvas():
     """
-    Draw a stickman at the given coordinates, with color and flashing logic.
+    Draw a stickman at the smoothed coordinates, with color and flashing logic.
     """
+    global position_history
     canvas.delete("point")
+    if not position_history:
+        return
+    avg_x = sum(p[0] for p in position_history) / len(position_history)
+    avg_y = sum(p[1] for p in position_history) / len(position_history)
 
     # Get sensor positions (receivers)
     sensor_positions = [sensor.get('pos', [0, 0]) for sensor in last_sensor_values]
@@ -102,7 +113,7 @@ def update_point_on_canvas(xpos, ypos):
     # Calculate distance to each receiver
     min_distance = float('inf')
     for sx, sy in sensor_positions:
-        dist = math.hypot(xpos - sx, ypos - sy)
+        dist = math.hypot(avg_x - sx, avg_y - sy)
         if dist < min_distance:
             min_distance = dist
 
@@ -125,8 +136,8 @@ def update_point_on_canvas(xpos, ypos):
     else:
         color = "#00cc44"  # green
 
-    canvas_x = (xpos - X_MIN) * (canvas.winfo_width() / (X_MAX - X_MIN))
-    canvas_y = canvas.winfo_height() - (ypos - Y_MIN) * (canvas.winfo_height() / (Y_MAX - Y_MIN))
+    canvas_x = (avg_x - X_MIN) * (canvas.winfo_width() / (X_MAX - X_MIN))
+    canvas_y = canvas.winfo_height() - (avg_y - Y_MIN) * (canvas.winfo_height() / (Y_MAX - Y_MIN))
 
     # Flashing logic: if very close, toggle visibility
     if min_distance < 1:
@@ -183,8 +194,8 @@ def visualize_sensors(sensor_values):
     # Clear existing sensor visualizations
     canvas_width = canvas.winfo_width()
     canvas_height = canvas.winfo_height()
-    graph_height=Y_MAX-Y_MIN
-    graph_width=X_MAX-X_MIN
+    graph_height = Y_MAX - Y_MIN
+    graph_width = X_MAX - X_MIN
     canvas.delete("sensordata")
     global firstcall
     for sensor in sensor_values:
@@ -224,8 +235,7 @@ def visualize_sensors(sensor_values):
                 label_y = canvas_y - (short_line_length + 10) * math.sin(angle_rad)* (graph_width/graph_height)
                 angle_label = f"{angle}°"
                 canvas.create_text(label_x, label_y, text=angle_label, fill="black", tags="sensor")
-    
-    firstcall=False
+    firstcall = False
 
 def draw_axes():
     """
@@ -236,7 +246,7 @@ def draw_axes():
 
     # Calculate baseX and baseY dynamically
     baseX = canvas_width * (-X_MIN / (X_MAX - X_MIN))
-    baseY = canvas_height * ( 1-(-Y_MIN / (Y_MAX - Y_MIN)))
+    baseY = canvas_height * (1 - (-Y_MIN / (Y_MAX - Y_MIN)))
 
     # Draw x-axis
     canvas.create_line(0, baseY, canvas_width, baseY, fill="black")
@@ -266,16 +276,15 @@ def resize_updates(event):
     global previous_width, previous_height
     current_width = canvas.winfo_width()
     current_height = canvas.winfo_height()
-    
-    # Check if the size has actually changed
     if current_width != previous_width or current_height != previous_height:
         previous_width = current_width
         previous_height = current_height
         print("Resize detected")
         canvas.delete("all")
         draw_axes()
+        update_point_on_canvas()
         global firstcall
-        firstcall=True
+        firstcall = True
 
 def main_thread():
     """
@@ -285,11 +294,11 @@ def main_thread():
         print(".", end="", flush=True)
         time.sleep(1)
 
-def main_async():
-    """
-    @brief Main function to run the Tkinter event loop asynchronously.
-    """
-    root.mainloop()
+def stop_simulation():
+    print("Stopping simulation...")
+    root.destroy()
+    subprocess.call("taskkill /F /IM python.exe", shell=True)
+    subprocess.call("taskkill /F /IM cmd.exe", shell=True)
 
 if __name__ == "__main__":
     # Initialize constants for the canvas
@@ -306,6 +315,10 @@ if __name__ == "__main__":
     # Create a label for displaying coordinates
     label = tk.Label(root, text="", font=("Arial", 14))
     label.pack(pady=10)
+
+    # Create a "Stop Simulation" button
+    stop_button = tk.Button(root, text="Stop Simulation", command=stop_simulation, bg="red", fg="white", font=("Arial", 12, "bold"))
+    stop_button.pack(pady=10)
 
     # Create a canvas for displaying points
     canvas = tk.Canvas(root, bg="white")
@@ -324,5 +337,5 @@ if __name__ == "__main__":
     main_thread_obj.daemon = True
     main_thread_obj.start()
 
-    # Start the Tkinter event loop in a separate thread
-    asyncio.run(main_async())
+    # Start the Tkinter event loop
+    root.mainloop()
