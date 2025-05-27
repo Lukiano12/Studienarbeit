@@ -9,11 +9,15 @@ import time
 import threading
 import socket
 from datetime import datetime
+import json
 
-def log_data(message, logfile):
-    timestamp = time.time()
+def log_data(raw_sensor_data, logfile):
+    # Save only the raw sensor data and timestamp
     with open(logfile, "a") as f:
-        f.write(json.dumps({"timestamp": timestamp, "data": json.loads(message)}) + "\n")
+        f.write(json.dumps({
+            "timestamp": datetime.now().isoformat(),
+            "raw_sensor_data": raw_sensor_data
+        }) + "\n")
 
 # Set the server address and port
 port= 12346
@@ -279,9 +283,14 @@ def main():
                     ui_sock.sendall(message_final.encode("utf-8"))
                 except Exception as e:
                     print(f"Error sending to UI: {e}")
-                # Only send to other clients, not the UI
-                # send_data_to_all_clients(message_final)
-                log_data(message_final, log_filename)
+
+                # --- Compose and log the raw sensor data for replay ---
+                raw_sensor_data = {
+                    "anchors": [anchor1_pos, anchor2_pos],
+                    "angles": [angle_antenna_1, angle_antenna_2],
+                    "sensor_values": temp
+                }
+                log_data(raw_sensor_data, log_filename)
         except Exception as e:
             None
 

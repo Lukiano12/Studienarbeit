@@ -19,13 +19,13 @@ REM Change back to script directory before starting programs
 cd /d "%SCRIPT_DIR%"
 
 REM Start the C++ program in a new command prompt window
-start "" cmd.exe /k "%SCRIPT_DIR%build\Studienarbeit.exe" 
+start /min "" cmd.exe /k "%SCRIPT_DIR%build\Studienarbeit.exe" 
 
 REM Start the UI Python script in a new command prompt window
-start "" cmd.exe /k python.exe "%SCRIPT_DIR%src\DataRetrievalAndUi\ui.py"
+start /min "" cmd.exe /k python.exe "%SCRIPT_DIR%src\DataRetrievalAndUi\ui.py"
 
 REM Start the real sensor Python script in a new command prompt window
-start "" cmd.exe /k python.exe "%SCRIPT_DIR%src\DataRetrievalAndUi\getAnchorData.py"
+start /min "" cmd.exe /k python.exe "%SCRIPT_DIR%src\DataRetrievalAndUi\getAnchorData.py"
 
 REM For simulation only: comment out or remove the mockBluetooth line
 REM start "" cmd.exe /k python.exe "%SCRIPT_DIR%src\DataRetrievalAndUi\mockBluetooth.py"
