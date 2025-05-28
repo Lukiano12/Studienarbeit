@@ -7,20 +7,30 @@ import math
 
 # --- Triangulation function (copy from getAnchorData.py) ---
 def triangulate_position(anchor1, anchor2, angle1_deg, angle2_deg):
+    """
+    AoA convention: 0° = right (+X), 90° = up (+Y), 180° = left, 270° = down.
+    """
     angle1 = math.radians(angle1_deg)
     angle2 = math.radians(angle2_deg)
+    x1, y1 = anchor1
+    x2, y2 = anchor2
+
+    # Standard convention: 0° is right (+X), 90° is up (+Y)
     dx1 = math.cos(angle1)
     dy1 = math.sin(angle1)
     dx2 = math.cos(angle2)
     dy2 = math.sin(angle2)
-    x1, y1 = anchor1
-    x2, y2 = anchor2
+
     denominator = dx1 * dy2 - dy1 * dx2
     if abs(denominator) < 1e-6:
-        return [(x1 + x2) / 2, (y1 + y2) / 2]
-    t1 = ((x2 - x1) * dy2 - (y2 - y1) * dx2) / denominator
-    x = x1 + t1 * dx1
-    y = y1 + t1 * dy1
+        x = (x1 + x2) / 2
+        y = (y1 + y2) / 2
+    else:
+        t1 = ((x2 - x1) * dy2 - (y2 - y1) * dx2) / denominator
+        x = x1 + t1 * dx1
+        y = y1 + t1 * dy1
+
+    print(f"DEBUG: anchor1={anchor1}, anchor2={anchor2}, angle1={angle1_deg}, angle2={angle2_deg}, tag=({x:.2f}, {y:.2f})")
     return [x, y]
 
 if len(sys.argv) > 1:

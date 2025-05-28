@@ -25,6 +25,9 @@ last_sensor_values = []
 position_history = []
 SMOOTHING_WINDOW = 5  # Increase for more smoothing, decrease for less lag
 
+# Add this constant at the top (if not already present)
+AXIS_OFFSET = 0.15  # 0.0 = bottom, 0.5 = center, 1.0 = top (fraction of canvas height)
+
 def handle_client(conn, addr):
     print('Connected by', addr)
     try:
@@ -98,7 +101,7 @@ def update_display(msg):
 
 def update_point_on_canvas():
     """
-    Draw a stickman at the smoothed coordinates, with color and flashing logic.
+    Draw a stickman at the smoothed coordinates, always in red, no flashing.
     """
     global position_history
     canvas.delete("point")
@@ -128,21 +131,16 @@ def update_point_on_canvas():
     else:
         size = 30
 
-    # Color: red (close), yellow (medium), green (far)
-    if min_distance < 2:
-        color = "#ff3333"  # red
-    elif min_distance < 5:
-        color = "#ffcc00"  # yellow
-    else:
-        color = "#00cc44"  # green
+    # Always use red color, no flashing
+    color = "#ff3333"
 
-    canvas_x = (avg_x - X_MIN) * (canvas.winfo_width() / (X_MAX - X_MIN))
-    canvas_y = canvas.winfo_height() - (avg_y - Y_MIN) * (canvas.winfo_height() / (Y_MAX - Y_MIN))
-
-    # Flashing logic: if very close, toggle visibility
-    if min_distance < 1:
-        if int(time.time() * 2) % 2 == 0:
-            return  # Don't draw the stickman (invisible this frame)
+    # --- Center the axes: place (0,0) at bottom center ---
+    canvas_width = canvas.winfo_width()
+    canvas_height = canvas.winfo_height()
+    # X: 0 is at center, X increases to right, decreases to left
+    # Y: 0 is at bottom, Y increases upwards
+    canvas_x = (avg_x - X_MIN) / (X_MAX - X_MIN) * canvas_width
+    canvas_y = canvas_height - ((avg_y - Y_MIN) / (Y_MAX - Y_MIN) * canvas_height) - (canvas_height * AXIS_OFFSET)
 
     # Draw stickman (head, body, arms, legs)
     head_radius = size * 0.2
@@ -207,7 +205,7 @@ def visualize_sensors(sensor_values):
 
         # Calculate canvas coordinates for the sensor position
         canvas_x = (xpos - X_MIN) * (canvas_width / (X_MAX - X_MIN))
-        canvas_y = canvas_height - (ypos - Y_MIN) * (canvas_height / (Y_MAX - Y_MIN))
+        canvas_y = canvas_height - (ypos - Y_MIN) * (canvas_height / (Y_MAX - Y_MIN)) - (canvas_height * AXIS_OFFSET)
         aspect_ratio = canvas_width / canvas_height
 
         # Calculate endpoint of the line based on angle and length
@@ -244,25 +242,25 @@ def draw_axes():
     canvas_width = canvas.winfo_width()
     canvas_height = canvas.winfo_height()
 
-    # Calculate baseX and baseY dynamically
-    baseX = canvas_width * (-X_MIN / (X_MAX - X_MIN))
-    baseY = canvas_height * (1 - (-Y_MIN / (Y_MAX - Y_MIN)))
+    # --- Move the axes up a bit: add an offset to baseY ---
+    baseX = (0 - X_MIN) / (X_MAX - X_MIN) * canvas_width
+    baseY = canvas_height - ((0 - Y_MIN) / (Y_MAX - Y_MIN) * canvas_height) - (canvas_height * AXIS_OFFSET)
 
-    # Draw x-axis
+    # Draw x-axis (horizontal, through y=0)
     canvas.create_line(0, baseY, canvas_width, baseY, fill="black")
 
-    # Draw y-axis
+    # Draw y-axis (vertical, through x=0)
     canvas.create_line(baseX, 0, baseX, canvas_height, fill="black")
 
     # Draw x-axis ticks and labels
     for x in range(int(X_MIN), int(X_MAX) + 1):
-        canvas_x = (x - X_MIN) * (canvas_width / (X_MAX - X_MIN))
+        canvas_x = (x - X_MIN) / (X_MAX - X_MIN) * canvas_width
         canvas.create_line(canvas_x, baseY - TICK_SIZE, canvas_x, baseY + TICK_SIZE, fill="black")
         canvas.create_text(canvas_x, baseY + TICK_SIZE + 5, text=str(x), anchor="n")
 
     # Draw y-axis ticks and labels
     for y in range(int(Y_MIN), int(Y_MAX) + 1):
-        canvas_y = canvas_height - (y - Y_MIN) * (canvas_height / (Y_MAX - Y_MIN))
+        canvas_y = canvas_height - ((y - Y_MIN) / (Y_MAX - Y_MIN) * canvas_height) - (canvas_height * AXIS_OFFSET)
         canvas.create_line(baseX - TICK_SIZE, canvas_y, baseX + TICK_SIZE, canvas_y, fill="black")
         canvas.create_text(baseX - TICK_SIZE - 15, canvas_y, text=str(y), anchor="e")
 
@@ -304,13 +302,14 @@ if __name__ == "__main__":
     # Initialize constants for the canvas
     POINT_SIZE = 5
     TICK_SIZE = 5
-    X_MIN, X_MAX = -1, 5
-    Y_MIN, Y_MAX = -1, 20
+    X_MIN, X_MAX = -2, 6    # <--- Zoom out horizontally
+    Y_MIN, Y_MAX = -2, 10   # <--- Zoom out vertically
 
     # Initialize Tkinter GUI
     root = tk.Tk()
     root.title("Coordinates Display")
-    root.geometry("800x800")  # Set initial window size
+    # Start in fullscreen mode
+    root.attributes("-fullscreen", True)
 
     # Create a label for displaying coordinates
     label = tk.Label(root, text="", font=("Arial", 14))

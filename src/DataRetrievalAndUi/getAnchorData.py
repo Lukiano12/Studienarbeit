@@ -180,27 +180,32 @@ def accept_connections():
 
 def triangulate_position(anchor1, anchor2, angle1_deg, angle2_deg):
     """
-    Calculate the (x, y) position of the tag using two anchors and their measured angles.
-    anchor1, anchor2: [x, y] positions of the anchors
-    angle1_deg, angle2_deg: measured angles (in degrees) from each anchor to the tag
-    Returns: [x, y] list
+    AoA convention: 0° = up (+Y), 90° = right (+X), 180° = down, 270° = left.
     """
     angle1 = math.radians(angle1_deg)
     angle2 = math.radians(angle2_deg)
     x1, y1 = anchor1
     x2, y2 = anchor2
 
-    dx1 = math.cos(angle1)
-    dy1 = math.sin(angle1)
-    dx2 = math.cos(angle2)
-    dy2 = math.sin(angle2)
+    # Use sin for dx, cos for dy so 0° is up (+Y)
+    dx1 = math.sin(angle1)
+    dy1 = math.cos(angle1)
+    dx2 = math.sin(angle2)
+    dy2 = math.cos(angle2)
 
     denominator = dx1 * dy2 - dy1 * dx2
     if abs(denominator) < 1e-6:
-        return [(x1 + x2) / 2, (y1 + y2) / 2]
-    t1 = ((x2 - x1) * dy2 - (y2 - y1) * dx2) / denominator
-    x = x1 + t1 * dx1
-    y = y1 + t1 * dy1
+        x = (x1 + x2) / 2
+        y = (y1 + y2) / 2
+    else:
+        t1 = ((x2 - x1) * dy2 - (y2 - y1) * dx2) / denominator
+        x = x1 + t1 * dx1
+        y = y1 + t1 * dy1
+
+    # Optionally scale Y for visibility
+    # y = y * 5
+
+    print(f"DEBUG: anchor1={anchor1}, anchor2={anchor2}, angle1={angle1_deg}, angle2={angle2_deg}, tag=({x:.2f}, {y:.2f})")
     return [x, y]
 
 # --- Added: Connect to UI as a client ---
