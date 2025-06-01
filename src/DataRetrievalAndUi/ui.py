@@ -26,7 +26,10 @@ position_history = []
 SMOOTHING_WINDOW = 5  # Increase for more smoothing, decrease for less lag
 
 # Add this constant at the top (if not already present)
-AXIS_OFFSET = 0.15  # 0.0 = bottom, 0.5 = center, 1.0 = top (fraction of canvas height)
+AXIS_OFFSET = 0.3   # vertical shift (fraction of canvas height)
+AXIS_OFFSET_X = 0.4 # horizontal shift (fraction of canvas width)
+
+show_visualization = True
 
 def handle_client(conn, addr):
     print('Connected by', addr)
@@ -189,13 +192,15 @@ def visualize_sensors(sensor_values):
     @brief Visualize sensor data on the canvas.
     @param sensor_values List of sensor data values.
     """
-    # Clear existing sensor visualizations
+    global firstcall, show_visualization
     canvas_width = canvas.winfo_width()
     canvas_height = canvas.winfo_height()
     graph_height = Y_MAX - Y_MIN
     graph_width = X_MAX - X_MIN
     canvas.delete("sensordata")
-    global firstcall
+    if not show_visualization:
+        canvas.delete("sensor")
+        return
     for sensor in sensor_values:
         theta = math.radians(sensor.get('theta', 0))
         val = math.radians(sensor.get('val', 0))
@@ -208,13 +213,27 @@ def visualize_sensors(sensor_values):
         canvas_y = canvas_height - (ypos - Y_MIN) * (canvas_height / (Y_MAX - Y_MIN)) - (canvas_height * AXIS_OFFSET)
         aspect_ratio = canvas_width / canvas_height
 
-        # Calculate endpoint of the line based on angle and length
-        line_length = 5000  # Adjust as needed
-        end_x = canvas_x + line_length * math.cos(resAngle) * aspect_ratio
-        end_y = canvas_y - line_length * math.sin(resAngle) * (graph_width/graph_height)
-
-        # Draw line originating from the box
-        canvas.create_line(canvas_x, canvas_y, end_x, end_y, fill="black", tags="sensordata")
+        # Draw line from antenna to current tag position (stickman)
+        if position_history:
+            avg_x = sum(p[0] for p in position_history) / len(position_history)
+            avg_y = sum(p[1] for p in position_history) / len(position_history)
+            # Direction vector from antenna to tag
+            dx = avg_x - xpos
+            dy = avg_y - ypos
+            # Normalize direction
+            length = math.hypot(dx, dy)
+            if length == 0:
+                continue  # Avoid division by zero
+            dx /= length
+            dy /= length
+            # Extend line far beyond the tag (to canvas edge)
+            extend = max(X_MAX - X_MIN, Y_MAX - Y_MIN) * 2  # Large enough to cross canvas
+            end_x_world = xpos + dx * extend
+            end_y_world = ypos + dy * extend
+            end_canvas_x = (end_x_world - X_MIN) * (canvas_width / (X_MAX - X_MIN))
+            end_canvas_y = canvas_height - (end_y_world - Y_MIN) * (canvas_height / (Y_MAX - Y_MIN)) - (canvas_height * AXIS_OFFSET)
+            # Draw a thick, continuous line from antenna through tag
+            canvas.create_line(canvas_x, canvas_y, end_canvas_x, end_canvas_y, fill="black", width=2, tags="sensordata")
 
         if firstcall:
             # Draw green box
@@ -224,13 +243,13 @@ def visualize_sensors(sensor_values):
             for angle in range(0, 360, 20):
                 angle_rad = math.radians(angle)
                 short_line_length = 50
-                short_end_x = canvas_x + short_line_length * math.cos(angle_rad) *  aspect_ratio
+                short_end_x = canvas_x + short_line_length * math.cos(angle_rad) * aspect_ratio
                 short_end_y = canvas_y - short_line_length * math.sin(angle_rad) * (graph_width/graph_height)
                 canvas.create_line(canvas_x, canvas_y, short_end_x, short_end_y, fill="black", tags="sensor")
 
                 # Add angle labels
-                label_x = canvas_x + (short_line_length + 10) * math.cos(angle_rad) *  aspect_ratio
-                label_y = canvas_y - (short_line_length + 10) * math.sin(angle_rad)* (graph_width/graph_height)
+                label_x = canvas_x + (short_line_length + 10) * math.cos(angle_rad) * aspect_ratio
+                label_y = canvas_y - (short_line_length + 10) * math.sin(angle_rad) * (graph_width/graph_height)
                 angle_label = f"{angle}°"
                 canvas.create_text(label_x, label_y, text=angle_label, fill="black", tags="sensor")
     firstcall = False
@@ -239,6 +258,9 @@ def draw_axes():
     """
     @brief Draw the coordinate axes on the canvas.
     """
+    if not show_visualization:
+        canvas.delete("axes")
+        return
     canvas_width = canvas.winfo_width()
     canvas_height = canvas.winfo_height()
 
@@ -247,22 +269,25 @@ def draw_axes():
     baseY = canvas_height - ((0 - Y_MIN) / (Y_MAX - Y_MIN) * canvas_height) - (canvas_height * AXIS_OFFSET)
 
     # Draw x-axis (horizontal, through y=0)
-    canvas.create_line(0, baseY, canvas_width, baseY, fill="black")
+    canvas.create_line(0, baseY, canvas_width, baseY, fill="black", tags="axes")
 
     # Draw y-axis (vertical, through x=0)
-    canvas.create_line(baseX, 0, baseX, canvas_height, fill="black")
+    canvas.create_line(baseX, 0, baseX, canvas_height, fill="black", tags="axes")
 
     # Draw x-axis ticks and labels
     for x in range(int(X_MIN), int(X_MAX) + 1):
         canvas_x = (x - X_MIN) / (X_MAX - X_MIN) * canvas_width
-        canvas.create_line(canvas_x, baseY - TICK_SIZE, canvas_x, baseY + TICK_SIZE, fill="black")
-        canvas.create_text(canvas_x, baseY + TICK_SIZE + 5, text=str(x), anchor="n")
+        canvas.create_line(canvas_x, baseY - TICK_SIZE, canvas_x, baseY + TICK_SIZE, fill="black", tags="axes")
+        canvas.create_text(canvas_x, baseY + TICK_SIZE + 5, text=str(x), anchor="n", tags="axes")
 
     # Draw y-axis ticks and labels
     for y in range(int(Y_MIN), int(Y_MAX) + 1):
         canvas_y = canvas_height - ((y - Y_MIN) / (Y_MAX - Y_MIN) * canvas_height) - (canvas_height * AXIS_OFFSET)
-        canvas.create_line(baseX - TICK_SIZE, canvas_y, baseX + TICK_SIZE, canvas_y, fill="black")
-        canvas.create_text(baseX - TICK_SIZE - 15, canvas_y, text=str(y), anchor="e")
+        canvas.create_line(baseX - TICK_SIZE, canvas_y, baseX + TICK_SIZE, canvas_y, fill="black", tags="axes")
+        canvas.create_text(baseX - TICK_SIZE - 15, canvas_y, text=str(y), anchor="e", tags="axes")
+
+    # --- Draw the truck after axes, before antennas ---
+    draw_truck()
 
 previous_width = None
 previous_height = None
@@ -298,6 +323,83 @@ def stop_simulation():
     subprocess.call("taskkill /F /IM python.exe", shell=True)
     subprocess.call("taskkill /F /IM cmd.exe", shell=True)
 
+def toggle_visualization():
+    global show_visualization, firstcall
+    show_visualization = not show_visualization
+    firstcall = True
+    canvas.delete("axes")
+    canvas.delete("sensor")
+    canvas.delete("sensordata")
+    draw_axes()
+    visualize_sensors(last_sensor_values)
+
+def draw_truck():
+    """
+    Draw a simple truck on the canvas.
+    Adjust the parameters below to change the look and position.
+    """
+    canvas_width = canvas.winfo_width()
+    canvas_height = canvas.winfo_height()
+
+    # === PARAMETERS YOU CAN CHANGE ===
+    # Position and size (as fractions of canvas size)
+    truck_top_frac = 0.6     # Vertical position (0=top, 1=bottom)
+    truck_left_frac = 0.30     # Horizontal position (0=left, 1=right)
+    truck_width_frac = 0.25   # Width of the truck (fraction of canvas width)
+    truck_height_frac = 0.12   # Height of the truck (fraction of canvas height)
+    cab_width_frac = 0.2     # Fraction of truck width for the cab
+
+    # Wheel size and position
+    wheel_radius_frac = 0.028  # Fraction of canvas height for wheel radius
+    rear_wheel_offset_frac = 0.7  # Fraction of trailer width for rear wheel position
+    front_wheel_offset_frac = 0.5  # Fraction of cab width for front wheel position
+
+    # === CALCULATED POSITIONS ===
+    truck_height = canvas_height * truck_height_frac
+    truck_width = canvas_width * truck_width_frac
+    cab_width = truck_width * cab_width_frac
+    trailer_width = truck_width - cab_width
+    truck_top = canvas_height * truck_top_frac
+    truck_left = canvas_width * truck_left_frac
+
+    # Trailer (big rectangle)
+    trailer_left = truck_left + cab_width
+    trailer_top = truck_top
+    trailer_right = trailer_left + trailer_width
+    trailer_bottom = trailer_top + truck_height
+    canvas.create_rectangle(
+        trailer_left, trailer_top, trailer_right, trailer_bottom,
+        fill="white", outline="black", width=3, tags="truck"
+    )
+
+    # Cab (small rectangle)
+    cab_left = truck_left
+    cab_right = cab_left + cab_width
+    cab_top = truck_top + truck_height * 0.25
+    cab_bottom = trailer_bottom
+    canvas.create_rectangle(
+        cab_left, cab_top, cab_right, cab_bottom,
+        fill="white", outline="black", width=3, tags="truck"
+    )
+
+    # Wheels (two circles)
+    wheel_radius = canvas_height * wheel_radius_frac
+    wheel_y = trailer_bottom + wheel_radius * 0.5
+    # Rear wheel (under trailer)
+    rear_wheel_x = trailer_left + trailer_width * rear_wheel_offset_frac
+    canvas.create_oval(
+        rear_wheel_x - wheel_radius, wheel_y - wheel_radius,
+        rear_wheel_x + wheel_radius, wheel_y + wheel_radius,
+        fill="white", outline="black", width=3, tags="truck"
+    )
+    # Front wheel (under cab)
+    front_wheel_x = cab_left + cab_width * front_wheel_offset_frac
+    canvas.create_oval(
+        front_wheel_x - wheel_radius, wheel_y - wheel_radius,
+        front_wheel_x + wheel_radius, wheel_y + wheel_radius,
+        fill="white", outline="black", width=3, tags="truck"
+    )
+
 if __name__ == "__main__":
     # Initialize constants for the canvas
     POINT_SIZE = 5
@@ -311,15 +413,36 @@ if __name__ == "__main__":
     # Start in fullscreen mode
     root.attributes("-fullscreen", True)
 
-    # Create a label for displaying coordinates
-    label = tk.Label(root, text="", font=("Arial", 14))
-    label.pack(pady=10)
+    # --- Create a frame at the top for the coordinate label ---
+    top_frame = tk.Frame(root, bg="white", height=40)
+    top_frame.pack(side=tk.TOP, fill=tk.X)
+    top_frame.pack_propagate(0)
+
+    # Create a label for displaying coordinates (now in top_frame)
+    label = tk.Label(top_frame, text="", font=("Arial", 14), bg="white")
+    label.pack(side=tk.LEFT, padx=10, pady=10)
+
+    # --- Create a frame at the bottom for buttons ---
+    bottom_frame = tk.Frame(root, bg="white", height=60)
+    bottom_frame.pack(side=tk.BOTTOM, fill=tk.X)
+    bottom_frame.pack_propagate(0)
+
+    # Button style
+    button_bg = "#1976d2"
+    button_fg = "white"
+    button_font = ("Arial", 12, "bold")
 
     # Create a "Stop Simulation" button
-    stop_button = tk.Button(root, text="Stop Simulation", command=stop_simulation, bg="red", fg="white", font=("Arial", 12, "bold"))
-    stop_button.pack(pady=10)
+    stop_button = tk.Button(bottom_frame, text="Stop Simulation", command=stop_simulation,
+                            bg=button_bg, fg=button_fg, font=button_font)
+    stop_button.pack(side=tk.LEFT, padx=10, pady=10)
 
-    # Create a canvas for displaying points
+    # Create a "Toggle Antennas/Coordinates" button
+    toggle_button = tk.Button(bottom_frame, text="Toggle Antennas/Coordinates", command=toggle_visualization,
+                              bg=button_bg, fg=button_fg, font=button_font)
+    toggle_button.pack(side=tk.LEFT, padx=10, pady=10)
+
+    # Create a canvas for displaying points (pack into root, NOT top_frame or bottom_frame)
     canvas = tk.Canvas(root, bg="white")
     canvas.pack(fill=tk.BOTH, expand=True)
 
