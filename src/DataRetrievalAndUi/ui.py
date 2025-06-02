@@ -104,7 +104,7 @@ def update_display(msg):
 
 def update_point_on_canvas():
     """
-    Draw a stickman at the smoothed coordinates, always in red, no flashing.
+    Draw a stickman at the smoothed coordinates, color based on distance to truck.
     """
     global position_history
     canvas.delete("point")
@@ -116,7 +116,7 @@ def update_point_on_canvas():
     # Get sensor positions (receivers)
     sensor_positions = [sensor.get('pos', [0, 0]) for sensor in last_sensor_values]
 
-    # Calculate distance to each receiver
+    # Calculate distance to each receiver (for stickman size)
     min_distance = float('inf')
     for sx, sy in sensor_positions:
         dist = math.hypot(avg_x - sx, avg_y - sy)
@@ -124,8 +124,8 @@ def update_point_on_canvas():
             min_distance = dist
 
     # Stickman size mapping
-    min_size = 20
-    max_size = 60
+    min_size = 30
+    max_size = 90
     max_dist = 10  # adjust as needed
 
     if sensor_positions:
@@ -134,14 +134,29 @@ def update_point_on_canvas():
     else:
         size = 30
 
-    # Always use red color, no flashing
-    color = "#ff3333"
-
-    # --- Center the axes: place (0,0) at bottom center ---
+    # --- Calculate distance to truck center (in world coordinates) ---
+    # These must match your draw_truck() offsets and scaling!
     canvas_width = canvas.winfo_width()
     canvas_height = canvas.winfo_height()
-    # X: 0 is at center, X increases to right, decreases to left
-    # Y: 0 is at bottom, Y increases upwards
+    truck_x = canvas_width // 2 + 0      # x_offset from draw_truck
+    truck_y = canvas_height // 2 + 80    # y_offset from draw_truck
+
+    # Convert truck center to world coordinates
+    truck_world_x = X_MIN + (truck_x / canvas_width) * (X_MAX - X_MIN)
+    truck_world_y = Y_MIN + ((canvas_height - truck_y - (canvas_height * AXIS_OFFSET)) / canvas_height) * (Y_MAX - Y_MIN)
+
+    # Distance from stickman to truck center (in world coordinates)
+    dist_to_truck = math.hypot(avg_x - truck_world_x, avg_y - truck_world_y)
+
+    # --- Set color based on distance (red = close, yellow = medium, green = far) ---
+    if dist_to_truck < 2.0:         # More sensitive: red when very close
+        color = "red"
+    elif dist_to_truck < 4.0:       # Yellow at a moderate distance
+        color = "yellow"
+    else:
+        color = "green"
+
+    # --- Center the axes: place (0,0) at bottom center ---
     canvas_x = (avg_x - X_MIN) / (X_MAX - X_MIN) * canvas_width
     canvas_y = canvas_height - ((avg_y - Y_MIN) / (Y_MAX - Y_MIN) * canvas_height) - (canvas_height * AXIS_OFFSET)
 
@@ -333,78 +348,59 @@ def toggle_visualization():
     draw_axes()
     visualize_sensors(last_sensor_values)
 
+truck_img = None
+
 def draw_truck():
-    """
-    Draw a simple truck on the canvas.
-    Adjust the parameters below to change the look and position.
-    """
+    global truck_img
     canvas_width = canvas.winfo_width()
     canvas_height = canvas.winfo_height()
 
-    # === PARAMETERS YOU CAN CHANGE ===
-    # Position and size (as fractions of canvas size)
-    truck_top_frac = 0.6     # Vertical position (0=top, 1=bottom)
-    truck_left_frac = 0.30     # Horizontal position (0=left, 1=right)
-    truck_width_frac = 0.25   # Width of the truck (fraction of canvas width)
-    truck_height_frac = 0.12   # Height of the truck (fraction of canvas height)
-    cab_width_frac = 0.2     # Fraction of truck width for the cab
+    # --- Truck image parameters ---
+    truck_image_path = r"C:\Studienarbeit 2\Studienarbeit\Documents\truck.png"
+    subsample_factor = 3  # Increase for smaller image, decrease for larger (must be integer)
+    x_offset = 0          # Positive = right, negative = left, 0 = center
+    y_offset = 80         # Positive = down, negative = up, 0 = center
 
-    # Wheel size and position
-    wheel_radius_frac = 0.028  # Fraction of canvas height for wheel radius
-    rear_wheel_offset_frac = 0.7  # Fraction of trailer width for rear wheel position
-    front_wheel_offset_frac = 0.5  # Fraction of cab width for front wheel position
+    # Load the image only once
+    if truck_img is None:
+        img = tk.PhotoImage(file=truck_image_path)
+        truck_img = img.subsample(subsample_factor, subsample_factor)
 
-    # === CALCULATED POSITIONS ===
-    truck_height = canvas_height * truck_height_frac
-    truck_width = canvas_width * truck_width_frac
-    cab_width = truck_width * cab_width_frac
-    trailer_width = truck_width - cab_width
-    truck_top = canvas_height * truck_top_frac
-    truck_left = canvas_width * truck_left_frac
+    # Draw the truck image
+    x = canvas_width // 2 + x_offset
+    y = canvas_height // 2 + y_offset
+    canvas.create_image(x, y, image=truck_img, anchor="center", tags="truck")
 
-    # Trailer (big rectangle)
-    trailer_left = truck_left + cab_width
-    trailer_top = truck_top
-    trailer_right = trailer_left + trailer_width
-    trailer_bottom = trailer_top + truck_height
-    canvas.create_rectangle(
-        trailer_left, trailer_top, trailer_right, trailer_bottom,
-        fill="white", outline="black", width=3, tags="truck"
-    )
-
-    # Cab (small rectangle)
-    cab_left = truck_left
-    cab_right = cab_left + cab_width
-    cab_top = truck_top + truck_height * 0.25
-    cab_bottom = trailer_bottom
-    canvas.create_rectangle(
-        cab_left, cab_top, cab_right, cab_bottom,
-        fill="white", outline="black", width=3, tags="truck"
-    )
-
-    # Wheels (two circles)
-    wheel_radius = canvas_height * wheel_radius_frac
-    wheel_y = trailer_bottom + wheel_radius * 0.5
-    # Rear wheel (under trailer)
-    rear_wheel_x = trailer_left + trailer_width * rear_wheel_offset_frac
+def draw_stickman(x, y, scale=1.7):
+    """
+    Draw a stickman at canvas coordinates (x, y) with a given scale.
+    """
+    # Head
+    head_radius = 18 * scale
     canvas.create_oval(
-        rear_wheel_x - wheel_radius, wheel_y - wheel_radius,
-        rear_wheel_x + wheel_radius, wheel_y + wheel_radius,
-        fill="white", outline="black", width=3, tags="truck"
+        x - head_radius, y - head_radius,
+        x + head_radius, y + head_radius,
+        fill="red", outline="red", tags="stickman"
     )
-    # Front wheel (under cab)
-    front_wheel_x = cab_left + cab_width * front_wheel_offset_frac
-    canvas.create_oval(
-        front_wheel_x - wheel_radius, wheel_y - wheel_radius,
-        front_wheel_x + wheel_radius, wheel_y + wheel_radius,
-        fill="white", outline="black", width=3, tags="truck"
-    )
+    # Body
+    body_length = 40 * scale
+    canvas.create_line(x, y + head_radius, x, y + head_radius + body_length, fill="red", width=3, tags="stickman")
+    # Arms
+    arm_length = 28 * scale
+    arm_y = y + head_radius + 12 * scale
+    canvas.create_line(x, arm_y, x - arm_length, arm_y + arm_length, fill="red", width=2, tags="stickman")
+    canvas.create_line(x, arm_y, x + arm_length, arm_y + arm_length, fill="red", width=2, tags="stickman")
+    # Legs
+    leg_length = 32 * scale
+    leg_y = y + head_radius + body_length
+    canvas.create_line(x, leg_y, x - leg_length, leg_y + leg_length, fill="red", width=2, tags="stickman")
+    canvas.create_line(x, leg_y, x + leg_length, leg_y + leg_length, fill="red", width=2, tags="stickman")
 
 if __name__ == "__main__":
     # Initialize constants for the canvas
     POINT_SIZE = 5
     TICK_SIZE = 5
-    X_MIN, X_MAX = -2, 6    # <--- Zoom out horizontally
+    X_MIN, X_MAX = -6, 10    # <--- Zoom out horizontally
     Y_MIN, Y_MAX = -2, 10   # <--- Zoom out vertically
 
     # Initialize Tkinter GUI

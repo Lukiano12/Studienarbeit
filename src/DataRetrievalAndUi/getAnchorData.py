@@ -10,6 +10,8 @@ import threading
 import socket
 from datetime import datetime
 import json
+from collections import deque
+import statistics
 
 def log_data(raw_sensor_data, logfile):
     # Save only the raw sensor data and timestamp
@@ -224,6 +226,15 @@ def connect_to_ui():
             time.sleep(1)
     raise Exception("Could not connect to UI after retries.")
 
+POSITION_SMOOTHING_WINDOW = 7  # You can adjust this for more/less smoothing
+position_history = deque(maxlen=POSITION_SMOOTHING_WINDOW)
+
+def get_smoothed_position(new_position):
+    position_history.append(new_position)
+    xs = [p[0] for p in position_history]
+    ys = [p[1] for p in position_history]
+    return [statistics.median(xs), statistics.median(ys)]
+
 def main():
     signal.signal(signal.SIGINT, signal_handler)
     global server_socket 
@@ -258,10 +269,12 @@ def main():
     while True:
         try:
             val = getValues(temp)
-            if val!=0:
-                temp=val
+            if val != 0:
+                temp = val
 
-                speed_along_line, last_angles, last_time = calculate_speed_along_line(temp, last_angles, distance_between_antennas, last_time)
+                speed_along_line, last_angles, last_time = calculate_speed_along_line(
+                    temp, last_angles, distance_between_antennas, last_time
+                )
 
                 angle_antenna_1 = last_angles[0]['val']
                 angle_antenna_2 = last_angles[1]['val']
@@ -276,6 +289,9 @@ def main():
                 anchor1_pos = temp[0]['pos']
                 anchor2_pos = temp[1]['pos']
                 tag_position = triangulate_position(anchor1_pos, anchor2_pos, angle_antenna_1, angle_antenna_2)
+
+                # --- Smooth the tag position ---
+                tag_position = get_smoothed_position(tag_position)
 
                 # Compose the message as expected by the UI and logger
                 message_final = json.dumps({

@@ -5,21 +5,21 @@ import sys
 import os
 import math
 
-# --- Triangulation function (copy from getAnchorData.py) ---
+# --- Triangulation function (identical to getAnchorData.py) ---
 def triangulate_position(anchor1, anchor2, angle1_deg, angle2_deg):
     """
-    AoA convention: 0° = right (+X), 90° = up (+Y), 180° = left, 270° = down.
+    AoA convention: 0° = up (+Y), 90° = right (+X), 180° = down, 270° = left.
     """
     angle1 = math.radians(angle1_deg)
     angle2 = math.radians(angle2_deg)
     x1, y1 = anchor1
     x2, y2 = anchor2
 
-    # Standard convention: 0° is right (+X), 90° is up (+Y)
-    dx1 = math.cos(angle1)
-    dy1 = math.sin(angle1)
-    dx2 = math.cos(angle2)
-    dy2 = math.sin(angle2)
+    # Use sin for dx, cos for dy so 0° is up (+Y)
+    dx1 = math.sin(angle1)
+    dy1 = math.cos(angle1)
+    dx2 = math.sin(angle2)
+    dy2 = math.cos(angle2)
 
     denominator = dx1 * dy2 - dy1 * dx2
     if abs(denominator) < 1e-6:
