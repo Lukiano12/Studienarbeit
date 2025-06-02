@@ -23,13 +23,18 @@ last_sensor_values = []
 
 # Smoothing for tag position
 position_history = []
-SMOOTHING_WINDOW = 5  # Increase for more smoothing, decrease for less lag
+SMOOTHING_WINDOW = 10  # More smoothing, less stutter
 
 # Add this constant at the top (if not already present)
 AXIS_OFFSET = 0.3   # vertical shift (fraction of canvas height)
 AXIS_OFFSET_X = 0.4 # horizontal shift (fraction of canvas width)
 
 show_visualization = True
+
+# --- New smoothing parameters ---
+SMOOTHING_ALPHA = 0.5 # Lower = smoother, higher = more responsive (try 0.3 to 0.5)
+MAX_JUMP = 10.0         # Maximum allowed jump in world units (raw input)
+MAX_Y_DELTA = 0.2       # Maximum allowed change in y per update (tune as needed)
 
 def handle_client(conn, addr):
     print('Connected by', addr)
@@ -91,6 +96,12 @@ def update_display(msg):
             sensor_values = data.get('sensor_values', [])
             last_sensor_values = sensor_values
             # Update smoothing buffer with the latest position (from any client)
+            # Before appending to position_history:
+            if position_history:
+                prev_x, prev_y = position_history[-1]
+                if abs(xpos - prev_x) > MAX_JUMP or abs(ypos - prev_y) > MAX_JUMP:
+                    # Ignore this outlier
+                    return
             position_history.append((xpos, ypos))
             if len(position_history) > SMOOTHING_WINDOW:
                 position_history.pop(0)
@@ -105,13 +116,28 @@ def update_display(msg):
 def update_point_on_canvas():
     """
     Draw a stickman at the smoothed coordinates, color based on distance to truck.
+    Uses exponential smoothing for less stuttering and more responsiveness.
     """
     global position_history
     canvas.delete("point")
     if not position_history:
         return
-    avg_x = sum(p[0] for p in position_history) / len(position_history)
-    avg_y = sum(p[1] for p in position_history) / len(position_history)
+
+    # --- Exponential smoothing for position ---
+    if position_history:
+        alpha = SMOOTHING_ALPHA
+        avg_x, avg_y = position_history[0]
+        for px, py in position_history[1:]:
+            avg_x = alpha * px + (1 - alpha) * avg_x
+            # Clamp y movement
+            new_avg_y = alpha * py + (1 - alpha) * avg_y
+            if abs(new_avg_y - avg_y) > MAX_Y_DELTA:
+                if new_avg_y > avg_y:
+                    avg_y += MAX_Y_DELTA
+                else:
+                    avg_y -= MAX_Y_DELTA
+            else:
+                avg_y = new_avg_y
 
     # Get sensor positions (receivers)
     sensor_positions = [sensor.get('pos', [0, 0]) for sensor in last_sensor_values]
@@ -135,7 +161,6 @@ def update_point_on_canvas():
         size = 30
 
     # --- Calculate distance to truck center (in world coordinates) ---
-    # These must match your draw_truck() offsets and scaling!
     canvas_width = canvas.winfo_width()
     canvas_height = canvas.winfo_height()
     truck_x = canvas_width // 2 + 0      # x_offset from draw_truck
@@ -143,15 +168,15 @@ def update_point_on_canvas():
 
     # Convert truck center to world coordinates
     truck_world_x = X_MIN + (truck_x / canvas_width) * (X_MAX - X_MIN)
-    truck_world_y = Y_MIN + ((canvas_height - truck_y - (canvas_height * AXIS_OFFSET)) / canvas_height) * (Y_MAX - Y_MIN)
+    truck_world_y = Y_MIN + ((canvas_height * (1 - AXIS_OFFSET) - truck_y) / canvas_height) * (Y_MAX - Y_MIN)
 
     # Distance from stickman to truck center (in world coordinates)
     dist_to_truck = math.hypot(avg_x - truck_world_x, avg_y - truck_world_y)
 
     # --- Set color based on distance (red = close, yellow = medium, green = far) ---
-    if dist_to_truck < 2.0:         # More sensitive: red when very close
+    if dist_to_truck < 2.0:
         color = "red"
-    elif dist_to_truck < 4.0:       # Yellow at a moderate distance
+    elif dist_to_truck < 4.0:
         color = "yellow"
     else:
         color = "green"
@@ -202,6 +227,28 @@ def update_point_on_canvas():
         fill=color, width=2, tags="point"
     )
 
+    # After smoothing avg_x, avg_y
+    ANTENNA_X_MIN = min([sensor.get('pos', [0, 0])[0] for sensor in last_sensor_values] or [X_MIN])
+    ANTENNA_X_MAX = max([sensor.get('pos', [0, 0])[0] for sensor in last_sensor_values] or [X_MAX])
+    ANTENNA_Y_MIN = min([sensor.get('pos', [0, 0])[1] for sensor in last_sensor_values] or [Y_MIN])
+    ANTENNA_Y_MAX = max([sensor.get('pos', [0, 0])[1] for sensor in last_sensor_values] or [Y_MAX])
+
+    # If tag is outside antenna x-range, clamp y to antenna y-range
+    if avg_x < ANTENNA_X_MIN or avg_x > ANTENNA_X_MAX:
+        avg_y = max(ANTENNA_Y_MIN, min(avg_y, ANTENNA_Y_MAX))
+
+    # Get antenna x-range
+    ANTENNA_XS = [sensor.get('pos', [0, 0])[0] for sensor in last_sensor_values]
+    ANTENNA_X_MIN = min(ANTENNA_XS or [X_MIN])
+    ANTENNA_X_MAX = max(ANTENNA_XS or [X_MAX])
+
+    # Only update/draw if avg_x is within antenna range
+    if not (ANTENNA_X_MIN <= avg_x <= ANTENNA_X_MAX):
+        # Option 1: Don't update the stickman at all
+        return
+        # Option 2: Draw stickman at last valid position, or fade color, or show warning
+        # color = "gray"
+
 def visualize_sensors(sensor_values):
     """
     @brief Visualize sensor data on the canvas.
@@ -216,6 +263,16 @@ def visualize_sensors(sensor_values):
     if not show_visualization:
         canvas.delete("sensor")
         return
+    # --- Use the same smoothing as for the stickman ---
+    if position_history:
+        alpha = SMOOTHING_ALPHA
+        avg_x, avg_y = position_history[0]
+        for px, py in position_history[1:]:
+            avg_x = alpha * px + (1 - alpha) * avg_x
+            avg_y = alpha * py + (1 - alpha) * avg_y
+    else:
+        avg_x, avg_y = 0, 0  # fallback
+
     for sensor in sensor_values:
         theta = math.radians(sensor.get('theta', 0))
         val = math.radians(sensor.get('val', 0))
@@ -225,30 +282,24 @@ def visualize_sensors(sensor_values):
 
         # Calculate canvas coordinates for the sensor position
         canvas_x = (xpos - X_MIN) * (canvas_width / (X_MAX - X_MIN))
-        canvas_y = canvas_height - (ypos - Y_MIN) * (canvas_height / (Y_MAX - Y_MIN)) - (canvas_height * AXIS_OFFSET)
+        canvas_y = canvas_height - ((ypos - Y_MIN) / (Y_MAX - Y_MIN) * canvas_height) - (canvas_height * AXIS_OFFSET)
         aspect_ratio = canvas_width / canvas_height
 
         # Draw line from antenna to current tag position (stickman)
-        if position_history:
-            avg_x = sum(p[0] for p in position_history) / len(position_history)
-            avg_y = sum(p[1] for p in position_history) / len(position_history)
-            # Direction vector from antenna to tag
-            dx = avg_x - xpos
-            dy = avg_y - ypos
-            # Normalize direction
-            length = math.hypot(dx, dy)
-            if length == 0:
-                continue  # Avoid division by zero
-            dx /= length
-            dy /= length
-            # Extend line far beyond the tag (to canvas edge)
-            extend = max(X_MAX - X_MIN, Y_MAX - Y_MIN) * 2  # Large enough to cross canvas
-            end_x_world = xpos + dx * extend
-            end_y_world = ypos + dy * extend
-            end_canvas_x = (end_x_world - X_MIN) * (canvas_width / (X_MAX - X_MIN))
-            end_canvas_y = canvas_height - (end_y_world - Y_MIN) * (canvas_height / (Y_MAX - Y_MIN)) - (canvas_height * AXIS_OFFSET)
-            # Draw a thick, continuous line from antenna through tag
-            canvas.create_line(canvas_x, canvas_y, end_canvas_x, end_canvas_y, fill="black", width=2, tags="sensordata")
+        # Use the same smoothed avg_x, avg_y as the stickman
+        dx = avg_x - xpos
+        dy = avg_y - ypos
+        length = math.hypot(dx, dy)
+        if length == 0:
+            continue  # Avoid division by zero
+        dx /= length
+        dy /= length
+        extend = max(X_MAX - X_MIN, Y_MAX - Y_MIN) * 2  # Large enough to cross canvas
+        end_x_world = xpos + dx * extend
+        end_y_world = ypos + dy * extend
+        end_canvas_x = (end_x_world - X_MIN) * (canvas_width / (X_MAX - X_MIN))
+        end_canvas_y = canvas_height - ((end_y_world - Y_MIN) / (Y_MAX - Y_MIN) * canvas_height) - (canvas_height * AXIS_OFFSET)
+        canvas.create_line(canvas_x, canvas_y, end_canvas_x, end_canvas_y, fill="black", width=2, tags="sensordata")
 
         if firstcall:
             # Draw green box
@@ -281,7 +332,7 @@ def draw_axes():
 
     # --- Move the axes up a bit: add an offset to baseY ---
     baseX = (0 - X_MIN) / (X_MAX - X_MIN) * canvas_width
-    baseY = canvas_height - ((0 - Y_MIN) / (Y_MAX - Y_MIN) * canvas_height) - (canvas_height * AXIS_OFFSET)
+    baseY = (canvas_height * (1 - AXIS_OFFSET)) - ((0 - Y_MIN) / (Y_MAX - Y_MIN) * canvas_height)
 
     # Draw x-axis (horizontal, through y=0)
     canvas.create_line(0, baseY, canvas_width, baseY, fill="black", tags="axes")
@@ -297,7 +348,7 @@ def draw_axes():
 
     # Draw y-axis ticks and labels
     for y in range(int(Y_MIN), int(Y_MAX) + 1):
-        canvas_y = canvas_height - ((y - Y_MIN) / (Y_MAX - Y_MIN) * canvas_height) - (canvas_height * AXIS_OFFSET)
+        canvas_y = (canvas_height * (1 - AXIS_OFFSET)) - ((y - Y_MIN) / (Y_MAX - Y_MIN) * canvas_height)
         canvas.create_line(baseX - TICK_SIZE, canvas_y, baseX + TICK_SIZE, canvas_y, fill="black", tags="axes")
         canvas.create_text(baseX - TICK_SIZE - 15, canvas_y, text=str(y), anchor="e", tags="axes")
 
@@ -341,7 +392,7 @@ def stop_simulation():
 def toggle_visualization():
     global show_visualization, firstcall
     show_visualization = not show_visualization
-    firstcall = True
+    firstcall = False
     canvas.delete("axes")
     canvas.delete("sensor")
     canvas.delete("sensordata")
