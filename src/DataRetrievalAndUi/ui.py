@@ -23,13 +23,13 @@ last_sensor_values = []
 
 # Smoothing for tag position
 position_history = []
-SMOOTHING_WINDOW = 10  # More smoothing, less stutter
+SMOOTHING_WINDOW = 15  # More smoothing, less stutter
 
 # Add this constant at the top (if not already present)
 AXIS_OFFSET = 0.3   # vertical shift (fraction of canvas height)
 AXIS_OFFSET_X = 0.4 # horizontal shift (fraction of canvas width)
 
-show_visualization = True
+show_visualization = False  # Start with only stickman and truck
 
 # --- New smoothing parameters ---
 SMOOTHING_ALPHA = 0.5 # Lower = smoother, higher = more responsive (try 0.3 to 0.5)
@@ -181,6 +181,12 @@ def update_point_on_canvas():
     else:
         color = "green"
 
+        avg_y = min(avg_y, 5)  # Clamp y to max 5 (to avoid going off canvas)
+
+    # --- Conditional y-limit: clamp y to max 4 if x <= -2 or x >= 4 ---
+    if avg_x <= -2 or avg_x >= 4:
+        avg_y = min(avg_y, 4)
+
     # --- Center the axes: place (0,0) at bottom center ---
     canvas_x = (avg_x - X_MIN) / (X_MAX - X_MIN) * canvas_width
     canvas_y = canvas_height - ((avg_y - Y_MIN) / (Y_MAX - Y_MIN) * canvas_height) - (canvas_height * AXIS_OFFSET)
@@ -191,40 +197,65 @@ def update_point_on_canvas():
     arm_length = size * 0.35
     leg_length = size * 0.4
 
-    # Head
+    # Head with black outline
     canvas.create_oval(
         canvas_x - head_radius, canvas_y - body_length - head_radius,
         canvas_x + head_radius, canvas_y - body_length + head_radius,
-        fill=color, outline=color, tags="point"
+        fill=color, outline="black", width=2, tags="point"
     )
-    # Body
+    # Body with black outline
     canvas.create_line(
         canvas_x, canvas_y - body_length + head_radius,
         canvas_x, canvas_y + body_length * 0.5,
-        fill=color, width=2, tags="point"
+        fill=color, width=4, tags="point"
     )
-    # Arms
+    canvas.create_line(
+        canvas_x, canvas_y - body_length + head_radius,
+        canvas_x, canvas_y + body_length * 0.5,
+        fill="black", width=1, tags="point"
+    )
+    # Arms with black outline
     canvas.create_line(
         canvas_x, canvas_y - body_length * 0.5,
         canvas_x - arm_length, canvas_y,
-        fill=color, width=2, tags="point"
+        fill=color, width=3, tags="point"
+    )
+    canvas.create_line(
+        canvas_x, canvas_y - body_length * 0.5,
+        canvas_x - arm_length, canvas_y,
+        fill="black", width=1, tags="point"
     )
     canvas.create_line(
         canvas_x, canvas_y - body_length * 0.5,
         canvas_x + arm_length, canvas_y,
-        fill=color, width=2, tags="point"
+        fill=color, width=3, tags="point"
     )
-    # Left leg
+    canvas.create_line(
+        canvas_x, canvas_y - body_length * 0.5,
+        canvas_x + arm_length, canvas_y,
+        fill="black", width=1, tags="point"
+    )
+    # Left leg with black outline
     canvas.create_line(
         canvas_x, canvas_y + body_length * 0.5,
         canvas_x - leg_length * 0.5, canvas_y + body_length * 0.5 + leg_length,
-        fill=color, width=2, tags="point"
+        fill=color, width=3, tags="point"
     )
-    # Right leg
+    canvas.create_line(
+        canvas_x, canvas_y + body_length * 0.5,
+        canvas_x - leg_length * 0.5, canvas_y + body_length * 0.5 + leg_length,
+        fill="black", width=1, tags="point"
+    )
+    # Right leg with black outline
     canvas.create_line(
         canvas_x, canvas_y + body_length * 0.5,
         canvas_x + leg_length * 0.5, canvas_y + body_length * 0.5 + leg_length,
-        fill=color, width=2, tags="point"
+        fill=color, width=3, tags="point"
+    )
+    canvas.create_line(
+        canvas_x, canvas_y + body_length * 0.5,
+        canvas_x + leg_length * 0.5, canvas_y + body_length * 0.5 + leg_length,
+        fill="black", width=1, tags="point"
     )
 
     # After smoothing avg_x, avg_y
@@ -243,11 +274,11 @@ def update_point_on_canvas():
     ANTENNA_X_MAX = max(ANTENNA_XS or [X_MAX])
 
     # Only update/draw if avg_x is within antenna range
-    if not (ANTENNA_X_MIN <= avg_x <= ANTENNA_X_MAX):
-        # Option 1: Don't update the stickman at all
-        return
-        # Option 2: Draw stickman at last valid position, or fade color, or show warning
-        # color = "gray"
+    # if not (ANTENNA_X_MIN <= avg_x <= ANTENNA_X_MAX):
+    #     return
+
+    # Option 2: Draw stickman at last valid position, or fade color, or show warning
+    # color = "gray"
 
 def visualize_sensors(sensor_values):
     """
@@ -370,6 +401,7 @@ def resize_updates(event):
         previous_height = current_height
         print("Resize detected")
         canvas.delete("all")
+        draw_truck()
         draw_axes()
         update_point_on_canvas()
         global firstcall
@@ -392,12 +424,17 @@ def stop_simulation():
 def toggle_visualization():
     global show_visualization, firstcall
     show_visualization = not show_visualization
-    firstcall = False
-    canvas.delete("axes")
-    canvas.delete("sensor")
-    canvas.delete("sensordata")
-    draw_axes()
-    visualize_sensors(last_sensor_values)
+    if show_visualization:
+        label.pack(side=tk.LEFT, padx=10, pady=10)  # Show coordinates label
+        firstcall = True  # Force redraw of antenna angle lines/labels
+        draw_axes()
+        visualize_sensors(last_sensor_values)
+    else:
+        label.pack_forget()  # Hide coordinates label
+        canvas.delete("axes")
+        canvas.delete("sensor")
+        canvas.delete("sensordata")
+        # Do NOT delete the truck or stickman here, so they remain visible
 
 truck_img = None
 
@@ -468,6 +505,7 @@ if __name__ == "__main__":
     # Create a label for displaying coordinates (now in top_frame)
     label = tk.Label(top_frame, text="", font=("Arial", 14), bg="white")
     label.pack(side=tk.LEFT, padx=10, pady=10)
+    label.pack_forget()  # Hide coordinates label at start
 
     # --- Create a frame at the bottom for buttons ---
     bottom_frame = tk.Frame(root, bg="white", height=60)
@@ -492,6 +530,9 @@ if __name__ == "__main__":
     # Create a canvas for displaying points (pack into root, NOT top_frame or bottom_frame)
     canvas = tk.Canvas(root, bg="white")
     canvas.pack(fill=tk.BOTH, expand=True)
+
+    # Draw the truck at startup
+    draw_truck()
 
     # Bind the resize event
     root.bind("<Configure>", resize_updates)

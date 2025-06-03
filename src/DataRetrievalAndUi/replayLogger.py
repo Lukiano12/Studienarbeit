@@ -55,24 +55,25 @@ def connect_with_retry():
 def main():
     sock = connect_with_retry()
     print(f"Connected to UI at {SERVER_HOST}:{SERVER_PORT}")
-    with open(LOGFILE, "r") as f:
-        for line in f:
-            entry = json.loads(line)
-            raw = entry["raw_sensor_data"]
-            anchor1, anchor2 = raw["anchors"]
-            angle1, angle2 = raw["angles"]
-            sensor_values = raw["sensor_values"]
+    while True:  # Loop forever
+        with open(LOGFILE, "r") as f:
+            for line in f:
+                entry = json.loads(line)
+                raw = entry["raw_sensor_data"]
+                anchor1, anchor2 = raw["anchors"]
+                angle1, angle2 = raw["angles"]
+                sensor_values = raw["sensor_values"]
 
-            # Recompute tag position using current code!
-            tag_position = triangulate_position(anchor1, anchor2, angle1, angle2)
+                # Recompute tag position using current code!
+                tag_position = triangulate_position(anchor1, anchor2, angle1, angle2)
 
-            # Compose message for UI
-            message = json.dumps({
-                "point": {"position": tag_position, "Uncertainty": 0},
-                "sensor_values": sensor_values
-            })
-            sock.sendall(message.encode("utf-8"))
-            time.sleep(0.05)  # Adjust replay speed as needed
+                # Compose message for UI
+                message = json.dumps({
+                    "point": {"position": tag_position, "Uncertainty": 0},
+                    "sensor_values": sensor_values
+                })
+                sock.sendall(message.encode("utf-8"))
+                time.sleep(0.05)  # Adjust replay speed as needed
 
 if __name__ == "__main__":
     main()
