@@ -23,7 +23,7 @@ last_sensor_values = []
 
 # Smoothing for tag position
 position_history = []
-SMOOTHING_WINDOW = 15  # More smoothing, less stutter
+SMOOTHING_WINDOW = 10  # More smoothing, less stutter
 
 # Add this constant at the top (if not already present)
 AXIS_OFFSET = 0.3   # vertical shift (fraction of canvas height)
@@ -32,7 +32,7 @@ AXIS_OFFSET_X = 0.4 # horizontal shift (fraction of canvas width)
 show_visualization = False  # Start with only stickman and truck
 
 # --- New smoothing parameters ---
-SMOOTHING_ALPHA = 0.5 # Lower = smoother, higher = more responsive (try 0.3 to 0.5)
+SMOOTHING_ALPHA = 0.3 # Lower = smoother, higher = more responsive (try 0.3 to 0.5)
 MAX_JUMP = 10.0         # Maximum allowed jump in world units (raw input)
 MAX_Y_DELTA = 0.2       # Maximum allowed change in y per update (tune as needed)
 
